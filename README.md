@@ -5,6 +5,8 @@ enforcement applied to an [MCP](https://modelcontextprotocol.io) server's
 tool calls — with the gate living in a Claude Code **PreToolUse hook**, not
 in the server itself.
 
+> Repo: <https://github.com/handgemacht-ai/mcp_cedar_demo>
+
 The MCP server is a deliberately passive `gh pr` wrapper (two tools:
 `create_pr`, `edit_pr`). Every call is intercepted by
 `.claude/hooks/cedar-gate.ts`, which derives the worktree's branch and any
