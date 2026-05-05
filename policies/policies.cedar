@@ -39,10 +39,10 @@ when {
   context.tool_pr_number != context.current_pr_number
 };
 
-// Hard guard: refuse to mutate when the worktree/PR lookup failed
+// Hard guard: refuse any gated action when the worktree/PR lookup failed
 // (not in a git repo, gh not authed, etc. — hook signals this by
 // setting branch == "").
-@id("forbid_mutate_without_branch")
+@id("forbid_actions_without_branch")
 forbid (
   principal,
   action in [Action::"CreatePR", Action::"EditPR", Action::"ClosePR"],

@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { runGh } from "./gh.ts";
 
-const INSTRUCTIONS = `Thin wrapper around \`gh pr create\`, \`gh pr edit\`, and \`gh pr close\`. This server is intentionally passive: it ships zero authorization logic. Cedar enforcement lives in the Claude Code PreToolUse hook at \`.claude/hooks/cedar-gate.ts\`, which gates every \`mcp__gh-pr__*\` call against \`policies/policies.cedar\` based on the current worktree's branch and any open PR associated with it.`;
+const INSTRUCTIONS = `Thin wrapper around \`gh pr create\`, \`gh pr edit\`, and \`gh pr close\`. Authorization is not enforced by this server. In this demo, a Claude Code PreToolUse hook (\`.claude/hooks/cedar-gate.ts\`) evaluates \`policies/policies.cedar\` for every \`mcp__gh-pr__*\` call before it reaches the tool; the same policies could be evaluated inside the server instead. See the repo README for the placement comparison.`;
 
 const mcpServer = new McpServer(
   { name: "gh-pr", version: "1.0.0" },

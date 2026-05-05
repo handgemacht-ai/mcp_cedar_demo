@@ -1,18 +1,24 @@
 # mcp_cedar_test
 
-A self-contained demo of [Cedar](https://www.cedarpolicy.com) policy
-enforcement applied to an [MCP](https://modelcontextprotocol.io) server's
-tool calls — with the gate living in a Claude Code **PreToolUse hook**, not
-in the server itself.
+A worked example of using [Cedar](https://www.cedarpolicy.com) to authorize
+[MCP](https://modelcontextprotocol.io) tool calls. Cedar is a policy
+engine; `isAuthorized` is a function call against a policy set, so you
+can invoke it in front of the MCP server (in the client) or behind it
+(inside the server, before it dispatches the call). This repo runs the
+front placement so you can read the wiring end-to-end; the
+[Where Cedar can sit](#where-cedar-can-sit-relative-to-an-mcp-server)
+section below covers when you'd choose each.
 
 > Repo: <https://github.com/handgemacht-ai/mcp_cedar_demo>
 
-The MCP server is a deliberately passive `gh pr` wrapper (three tools:
-`create_pr`, `edit_pr`, `close_pr`). Every call is intercepted by
-`.claude/hooks/cedar-gate.ts`, which derives the worktree's branch and any
-open PR association, evaluates `policies/policies.cedar`, and returns
-`allow` / `deny` to the harness. The server only runs `gh` — it has no idea
-Cedar exists.
+The MCP server here is a small `gh pr` wrapper exposing three tools
+(`create_pr`, `edit_pr`, `close_pr`). The Cedar check runs in a Claude Code
+**PreToolUse hook** at `.claude/hooks/cedar-gate.ts`: it reads the tool
+call, derives the worktree's branch and any open PR association, evaluates
+`policies/policies.cedar`, and returns `allow` / `deny` to the harness.
+The server holds no policy code in this layout — that's a property of
+where the check is wired in this layout, not a stance on what servers
+should do.
 
 ## What this is
 
@@ -36,28 +42,57 @@ Claude Code (main session or Task subagent)
                v
         +--------------+
         | MCP server   |  src/server.ts
-        | "gh-pr"      |  passive: shells out to `gh pr create|edit|close`
+        | "gh-pr"      |  shells out to `gh pr create|edit|close`
         +--------------+
 ```
 
 - **Hook**: TypeScript + Bun, single self-contained file.
 - **Cedar**: `@cedar-policy/cedar-wasm` (official WASM binding); policies in
   `policies/policies.cedar`.
-- **MCP server**: ~110 lines, three `registerTool` calls, no Cedar import.
+- **MCP server**: ~110 lines, three `registerTool` calls.
 - **Audit**: every gated call appends one JSONL line to `audit/audit.log`
   with the determining policy IDs.
 
-## Why a hook (and not Cedar inside the server)
+## Where Cedar can sit relative to an MCP server
 
-Putting Cedar in the hook keeps the MCP server *agnostic* — any MCP server
-can be governed this way without modifying its code. The hook also gets
-privileged access to the agent's runtime context (`agent_type`, `cwd`) that
-a remote MCP couldn't see, which is exactly what the policy needs to enforce
-"can this caller create a PR for *the worktree they're actually in*."
+A Cedar request is `(principal, action, resource, context)`; the engine
+matches it against the policy set and returns `allow` / `deny`. That call
+can run on either side of the MCP boundary. The policies don't change;
+the principal, context, and trust assumptions do.
 
-The trade-off: hooks are Claude-Code-specific. A truly cross-client
-deployment would put Cedar behind the MCP and gate on identity + verified
-state instead. This demo covers the local-trust-root case.
+```
+                    in front of MCP                  behind MCP
+                    (this demo)
+                    ┌────────────┐                   ┌────────────┐
+  agent ──tool──▶   │   client   │ ──tool over───▶   │   server   │ ──side effect──▶
+                    │ Cedar gate │     stdio/http    │ Cedar gate │
+                    └────────────┘                   └────────────┘
+                    principal:                       principal:
+                    Session::"main"                  User::"alice@example"
+```
+
+| | In front of MCP (hook in client) | Behind MCP (check in server) |
+|---|---|---|
+| Process running Cedar | Client / agent harness | MCP server |
+| Principal usually represents | The local agent / session (e.g. `Session::"main"`, `Subagent::"<type>"`) | An authenticated caller (OIDC subject, API key, service account) |
+| Context Cedar can read | Agent runtime: `agent_type`, `cwd`, current worktree, transcript | Server-verified state: DB rows, upstream API responses, request headers |
+| Trust model | Trusts the client to invoke the gate before the call leaves | Trusts nothing on the wire; server is the chokepoint |
+| Reach | One client (here: Claude Code only) | Every caller of the MCP |
+| TOCTOU | Window between hook decision and the server's `gh` call | Window between server decision and the upstream API call (e.g. GitHub). Both placements have a window — only the boundary differs. |
+| Good fit when | You want to gate on agent runtime that only the client knows | The MCP serves multiple clients/agents and identity is verifiable |
+
+Both placements are valid; production systems often use both, sharing one
+policy file. This demo gates on `agent_type` and `cwd` — client-side
+attributes — which is why the check sits in front of the MCP. A
+behind-MCP demo would gate on different attributes (authenticated
+subject, request headers, server-side state).
+
+The same policy file would mostly work behind the MCP too: you'd swap
+`Session::"main"` for the authenticated caller and supply the same
+`context` keys from server-side state. Some keys don't translate cleanly,
+though — `is_default_branch` is about *which* worktree the client is
+sitting in, which a shared server can't observe; behind-MCP, that key
+would either be dropped or re-modelled as a resource attribute.
 
 ## Quickstart
 
@@ -79,9 +114,10 @@ session start.
 | `close_pr({pr?, comment?, delete_branch?})` | `gh pr close ...` | `Action::"ClosePR"` |
 
 `pr` defaults to `"current"` (gh resolves to the PR for the current branch).
-All three tools are passive shells around `gh`; the policy work happens in
-the hook before they ever run. (GitHub doesn't allow deleting PRs — `close_pr`
-is the closest equivalent and can optionally delete the head branch.)
+All three tools are thin shells around `gh`; the Cedar check runs in the
+hook before the tool body executes. (GitHub doesn't allow deleting PRs —
+`close_pr` is the closest equivalent and can optionally delete the head
+branch.)
 
 ## Policy matrix
 
@@ -95,7 +131,7 @@ is the closest equivalent and can optionally delete the head branch.)
 | main, branch w/ PR #42, `edit_pr` or `close_pr` for #99 | `Session::"main"` | EditPR/ClosePR | true | 99 | no | DENY | `forbid_cross_pr_targeting` |
 | main, on default branch, `create_pr` | `Session::"main"` | CreatePR | false | 0 | yes | DENY | `forbid_create_from_default_branch` |
 | subagent, anything | `Subagent::"<type>"` | any | any | any | any | DENY | (no permit applies) |
-| Lookup failed (no git / no gh) | any | mutate | — | — | — | DENY | `forbid_mutate_without_branch` |
+| Lookup failed (no git / no gh) | `Session::"main"` | any | — | — | — | DENY | `forbid_actions_without_branch` |
 
 The `Session::"main"` vs `Subagent::"<type>"` split comes from the
 `agent_type` field in the PreToolUse hook stdin — present only when a Task
@@ -112,7 +148,7 @@ time — policies reload live):
    - `git rev-parse --abbrev-ref HEAD` → `branch`
    - `gh repo view --json nameWithOwner,defaultBranchRef` → `repo`, `default_branch`
    - `gh pr list --head <branch> --state open --json number,baseRefName` → `has_open_pr`, `current_pr_number`
-   - Any failure → `branch = ""` (forces a `forbid_mutate_without_branch`).
+   - Any failure → `branch = ""` (forces a `forbid_actions_without_branch`).
 3. **Build the Cedar request**:
    - `principal`: `Session::"main"` or `Subagent::"<agent_type>"`.
    - `action`: `CreatePR`, `EditPR`, or `ClosePR` (mapped from the tool name suffix).
@@ -164,8 +200,8 @@ bun scripts/smoke.ts
 
 Drives the hook directly with synthetic stdin payloads and the
 `CEDAR_GATE_BRANCH_PR_FIXTURE` env var injecting branch/PR state. No
-network, no `gh`, no real git. Fifteen scenarios covering every policy
-path across all three tools; exits non-zero on any mismatch.
+network, no `gh`, no real git. Covers every policy path across all three
+tools; exits non-zero on any mismatch.
 
 ## What this is NOT
 
@@ -173,9 +209,10 @@ path across all three tools; exits non-zero on any mismatch.
   in GitHub's branch protection, not in a client-side hook. The demo's
   value is showing how Cedar wires into Claude Code's hook surface, not
   the policy itself.
-- **Not multi-tenant.** Hooks are local to one Claude Code session. For a
-  remote MCP serving many agents, Cedar would live behind the server and
-  gate on identity + server-verified state — a different architecture.
+- **Not multi-tenant.** Hooks run inside one Claude Code session, so the
+  principal here is the local agent. For one decision point across many
+  callers, move Cedar behind the MCP and gate on authenticated
+  identity — see the placement table above.
 - **Multiple PRs per branch are simplified.** If `gh pr list --head <branch>`
   returns more than one open PR, the hook picks the lowest number and
   records `multiple_open_prs` in the audit's `errors`. Real systems would
