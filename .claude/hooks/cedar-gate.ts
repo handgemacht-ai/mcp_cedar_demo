@@ -188,6 +188,7 @@ const toolNameToAction = (toolName: string): string | null => {
   const suffix = toolName.replace(/^mcp__gh-pr__/, "");
   if (suffix === "create_pr") return "CreatePR";
   if (suffix === "edit_pr") return "EditPR";
+  if (suffix === "close_pr") return "ClosePR";
   return null;
 };
 
@@ -242,6 +243,7 @@ const main = async (): Promise<never> => {
           id: `${scope.repo || "?"}@${scope.branch || "?"}`,
         }
       : {
+          // EditPR | ClosePR
           type: "PullRequest",
           id: `${scope.repo || "?"}#${tool_pr_number || scope.current_pr_number || 0}`,
         };

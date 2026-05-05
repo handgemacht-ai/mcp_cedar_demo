@@ -7,8 +7,8 @@ in the server itself.
 
 > Repo: <https://github.com/handgemacht-ai/mcp_cedar_demo>
 
-The MCP server is a deliberately passive `gh pr` wrapper (two tools:
-`create_pr`, `edit_pr`). Every call is intercepted by
+The MCP server is a deliberately passive `gh pr` wrapper (three tools:
+`create_pr`, `edit_pr`, `close_pr`). Every call is intercepted by
 `.claude/hooks/cedar-gate.ts`, which derives the worktree's branch and any
 open PR association, evaluates `policies/policies.cedar`, and returns
 `allow` / `deny` to the harness. The server only runs `gh` — it has no idea
@@ -36,14 +36,14 @@ Claude Code (main session or Task subagent)
                v
         +--------------+
         | MCP server   |  src/server.ts
-        | "gh-pr"      |  passive: shells out to `gh pr create|edit`
+        | "gh-pr"      |  passive: shells out to `gh pr create|edit|close`
         +--------------+
 ```
 
 - **Hook**: TypeScript + Bun, single self-contained file.
 - **Cedar**: `@cedar-policy/cedar-wasm` (official WASM binding); policies in
   `policies/policies.cedar`.
-- **MCP server**: 80 lines, two `registerTool` calls, no Cedar import.
+- **MCP server**: ~110 lines, three `registerTool` calls, no Cedar import.
 - **Audit**: every gated call appends one JSONL line to `audit/audit.log`
   with the determining policy IDs.
 
@@ -76,10 +76,12 @@ session start.
 |---|---|---|
 | `create_pr({title, body, base?, draft?})` | `gh pr create ...` | `Action::"CreatePR"` |
 | `edit_pr({pr?, title?, body?, add_label?})` | `gh pr edit ...` | `Action::"EditPR"` |
+| `close_pr({pr?, comment?, delete_branch?})` | `gh pr close ...` | `Action::"ClosePR"` |
 
 `pr` defaults to `"current"` (gh resolves to the PR for the current branch).
-Both tools are passive shells around `gh`; the policy work happens in the
-hook before they ever run.
+All three tools are passive shells around `gh`; the policy work happens in
+the hook before they ever run. (GitHub doesn't allow deleting PRs — `close_pr`
+is the closest equivalent and can optionally delete the head branch.)
 
 ## Policy matrix
 
@@ -88,8 +90,9 @@ hook before they ever run.
 | main, branch w/o PR, `create_pr` | `Session::"main"` | CreatePR | false | 0 | no | ALLOW | `create_pr_when_no_upstream` |
 | main, branch w/o PR, `edit_pr` | `Session::"main"` | EditPR | false | 0 | no | DENY | (no permit) |
 | main, branch w/ PR #42, `create_pr` | `Session::"main"` | CreatePR | true | 0 | no | DENY | (no permit) |
-| main, branch w/ PR #42, `edit_pr` (current) | `Session::"main"` | EditPR | true | 0 | no | ALLOW | `edit_current_pr` |
-| main, branch w/ PR #42, `edit_pr` for #99 | `Session::"main"` | EditPR | true | 99 | no | DENY | `forbid_cross_pr_targeting` |
+| main, branch w/ PR #42, `edit_pr` (current) | `Session::"main"` | EditPR | true | 0 | no | ALLOW | `mutate_current_pr` |
+| main, branch w/ PR #42, `close_pr` (current) | `Session::"main"` | ClosePR | true | 0 | no | ALLOW | `mutate_current_pr` |
+| main, branch w/ PR #42, `edit_pr` or `close_pr` for #99 | `Session::"main"` | EditPR/ClosePR | true | 99 | no | DENY | `forbid_cross_pr_targeting` |
 | main, on default branch, `create_pr` | `Session::"main"` | CreatePR | false | 0 | yes | DENY | `forbid_create_from_default_branch` |
 | subagent, anything | `Subagent::"<type>"` | any | any | any | any | DENY | (no permit applies) |
 | Lookup failed (no git / no gh) | any | mutate | — | — | — | DENY | `forbid_mutate_without_branch` |
@@ -112,8 +115,8 @@ time — policies reload live):
    - Any failure → `branch = ""` (forces a `forbid_mutate_without_branch`).
 3. **Build the Cedar request**:
    - `principal`: `Session::"main"` or `Subagent::"<agent_type>"`.
-   - `action`: `CreatePR` or `EditPR` (mapped from the tool name suffix).
-   - `resource`: `Branch::"<repo>@<branch>"` for create; `PullRequest::"<repo>#<n>"` for edit.
+   - `action`: `CreatePR`, `EditPR`, or `ClosePR` (mapped from the tool name suffix).
+   - `resource`: `Branch::"<repo>@<branch>"` for create; `PullRequest::"<repo>#<n>"` for edit/close.
    - `context`: `{has_open_pr, current_pr_number, tool_pr_number, branch, default_branch, repo, is_default_branch}`.
 4. **`isAuthorized`** → `{decision, determiningPolicies, errors}`.
 5. **Audit**: one JSONL line to `audit/audit.log`.
@@ -161,8 +164,8 @@ bun scripts/smoke.ts
 
 Drives the hook directly with synthetic stdin payloads and the
 `CEDAR_GATE_BRANCH_PR_FIXTURE` env var injecting branch/PR state. No
-network, no `gh`, no real git. Ten scenarios covering every policy path;
-exits non-zero on any mismatch.
+network, no `gh`, no real git. Fifteen scenarios covering every policy
+path across all three tools; exits non-zero on any mismatch.
 
 ## What this is NOT
 

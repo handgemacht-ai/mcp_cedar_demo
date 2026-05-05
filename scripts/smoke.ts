@@ -14,7 +14,7 @@ interface Fixture {
 interface Scenario {
   name: string;
   fixture: Fixture;
-  toolName: "mcp__gh-pr__create_pr" | "mcp__gh-pr__edit_pr";
+  toolName: "mcp__gh-pr__create_pr" | "mcp__gh-pr__edit_pr" | "mcp__gh-pr__close_pr";
   toolInput: Record<string, unknown>;
   agentType: string | null;
   expected: "allow" | "deny";
@@ -98,6 +98,46 @@ const scenarios: Scenario[] = [
     fixture: { branch: "", repo: "", default_branch: "", has_open_pr: false, current_pr_number: 0 },
     toolName: "mcp__gh-pr__create_pr",
     toolInput: { title: "x" },
+    agentType: null,
+    expected: "deny",
+  },
+  {
+    name: "main, branch w/o PR, close_pr",
+    fixture: { branch: "feat/a", repo: "demo/app", default_branch: "main", has_open_pr: false, current_pr_number: 0 },
+    toolName: "mcp__gh-pr__close_pr",
+    toolInput: { pr: "current" },
+    agentType: null,
+    expected: "deny",
+  },
+  {
+    name: "main, branch w/ PR #42, close_pr (current)",
+    fixture: { branch: "feat/a", repo: "demo/app", default_branch: "main", has_open_pr: true, current_pr_number: 42 },
+    toolName: "mcp__gh-pr__close_pr",
+    toolInput: { pr: "current" },
+    agentType: null,
+    expected: "allow",
+  },
+  {
+    name: "main, branch w/ PR #42, close_pr #99",
+    fixture: { branch: "feat/a", repo: "demo/app", default_branch: "main", has_open_pr: true, current_pr_number: 42 },
+    toolName: "mcp__gh-pr__close_pr",
+    toolInput: { pr: 99 },
+    agentType: null,
+    expected: "deny",
+  },
+  {
+    name: "subagent, branch w/ PR, close_pr",
+    fixture: { branch: "feat/a", repo: "demo/app", default_branch: "main", has_open_pr: true, current_pr_number: 42 },
+    toolName: "mcp__gh-pr__close_pr",
+    toolInput: { pr: "current" },
+    agentType: "general-purpose",
+    expected: "deny",
+  },
+  {
+    name: "main, lookup failed, close_pr",
+    fixture: { branch: "", repo: "", default_branch: "", has_open_pr: false, current_pr_number: 0 },
+    toolName: "mcp__gh-pr__close_pr",
+    toolInput: { pr: "current" },
     agentType: null,
     expected: "deny",
   },

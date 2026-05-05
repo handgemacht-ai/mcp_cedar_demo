@@ -12,13 +12,13 @@ when {
   context.is_default_branch == false
 };
 
-// Allow main session to edit the current branch's PR. The model passes
-// `pr: "current"` (tool_pr_number == 0) by default, or it may pass the
-// actual number explicitly — both are fine as long as it matches.
-@id("edit_current_pr")
+// Allow main session to edit or close the current branch's PR. The model
+// passes `pr: "current"` (tool_pr_number == 0) by default, or it may pass
+// the actual number explicitly — both are fine as long as it matches.
+@id("mutate_current_pr")
 permit (
   principal == Session::"main",
-  action == Action::"EditPR",
+  action in [Action::"EditPR", Action::"ClosePR"],
   resource
 )
 when {
@@ -31,7 +31,7 @@ when {
 @id("forbid_cross_pr_targeting")
 forbid (
   principal,
-  action == Action::"EditPR",
+  action in [Action::"EditPR", Action::"ClosePR"],
   resource
 )
 when {
@@ -45,7 +45,7 @@ when {
 @id("forbid_mutate_without_branch")
 forbid (
   principal,
-  action in [Action::"CreatePR", Action::"EditPR"],
+  action in [Action::"CreatePR", Action::"EditPR", Action::"ClosePR"],
   resource
 )
 when { context.branch == "" };
