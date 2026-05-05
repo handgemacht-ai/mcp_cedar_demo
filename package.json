@@ -1,0 +1,21 @@
+{
+  "name": "mcp-cedar-test",
+  "module": "src/server.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun src/server.ts",
+    "smoke": "bun scripts/smoke.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@cedar-policy/cedar-wasm": "^4.10.0",
+    "zod": "^4.3.6"
+  }
+}

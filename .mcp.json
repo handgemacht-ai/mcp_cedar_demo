@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gh-pr": {
+      "command": "bun",
+      "args": ["src/server.ts"]
+    }
+  }
+}
